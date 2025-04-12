@@ -5,6 +5,10 @@ import yfinance as yf
 from datetime import datetime, timedelta
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
+import requests
+from bs4 import BeautifulSoup
+import time
+import json
 
 st.set_page_config(
     page_title="Mean Reversion Strategy Analyzer",
@@ -22,17 +26,89 @@ def get_historical_price(df, days_ago):
     except Exception:
         return None
 
+def get_currency_symbol(market_index):
+    currency_map = {
+        "": "$",  # US Market
+        "KL": "RM",  # Malaysian Market
+        "NS": "₹",  # Indian NSE
+        "BO": "₹"  # Indian BSE
+    }
+    return currency_map.get(market_index, "$")
+
+def get_ticker_symbol(symbol, market_index):
+    # Malaysian stock mapping
+    malaysian_tickers = {
+        "MAYBANK": "1155.KL",
+        "CIMB": "1023.KL",
+        "PBBANK": "1295.KL",
+        "TENAGA": "5347.KL",
+        "PCHEM": "5183.KL",
+        "IOICORP": "1961.KL",
+        "KLK": "2445.KL",
+        "SIME": "4197.KL",
+        "GENTING": "3182.KL",
+        "HAPSENG": "3034.KL"
+    }
+    
+    # US stock mapping
+    us_tickers = {
+        "APPLE": "AAPL",
+        "MICROSOFT": "MSFT",
+        "GOOGLE": "GOOGL",
+        "AMAZON": "AMZN",
+        "META": "META",
+        "TESLA": "TSLA",
+        "NVIDIA": "NVDA",
+        "JPMORGAN": "JPM",
+        "VISA": "V",
+        "WALMART": "WMT"
+    }
+    
+    # Indian stock mapping
+    indian_tickers = {
+        "SBI": "SBIN.NS",
+        "RELIANCE": "RELIANCE.NS",
+        "TCS": "TCS.NS",
+        "HDFC": "HDFCBANK.NS",
+        "INFOSYS": "INFY.NS",
+        "ICICI": "ICICIBANK.NS",
+        "ITC": "ITC.NS",
+        "KOTAK": "KOTAKBANK.NS",
+        "AXIS": "AXISBANK.NS",
+        "L&T": "LT.NS",
+        "BHARTI": "BHARTIARTL.NS"
+    }
+    
+    symbol = symbol.upper()
+    
+    if market_index == "KL":
+        return malaysian_tickers.get(symbol, f"{symbol}.KL")
+    elif market_index == "":
+        return us_tickers.get(symbol, symbol)
+    elif market_index == "NS":
+        return indian_tickers.get(symbol, f"{symbol}.NS")
+    else:  # BO
+        return indian_tickers.get(symbol, f"{symbol}.BO")
+
 def get_mean_reversion_signals(symbol, index="NS", lookback_days=60, investment_amount=100000):
     try:
         with st.spinner(f"Fetching data for {symbol}..."):
-            ticker = yf.Ticker(f"{symbol}.{index}")
+            # Get the correct ticker symbol
+            ticker_symbol = get_ticker_symbol(symbol, index)
+            ticker = yf.Ticker(ticker_symbol)
+            currency_symbol = get_currency_symbol(index)
+            
             end_date = datetime.now()
             buffer_days = max(15, int(lookback_days * 0.25))
             start_date = end_date - timedelta(days=lookback_days + buffer_days)
-            df = ticker.history(start=start_date, end=end_date, interval="1d")
-
-            if df.empty:
-                st.error(f"No data available for {symbol}")
+            
+            try:
+                df = ticker.history(start=start_date, end=end_date, interval="1d")
+                if df is None or df.empty:
+                    st.error(f"No data available for {symbol} (Ticker: {ticker_symbol})")
+                    return None
+            except Exception as e:
+                st.error(f"Error fetching data for {symbol} (Ticker: {ticker_symbol}): {str(e)}")
                 return None
 
             if lookback_days <= 20:
@@ -115,7 +191,8 @@ def get_mean_reversion_signals(symbol, index="NS", lookback_days=60, investment_
                 'Lookback Days': lookback_days,
                 'Short SMA Period': short_sma_period,
                 'Long SMA Period': long_sma_period,
-                'Data': df
+                'Data': df,
+                'Currency': currency_symbol
             }
             return result
     except Exception as e:
@@ -138,6 +215,7 @@ def create_plotly_chart(result):
     df = result['Data'].copy()
     short_sma_period = result['Short SMA Period']
     long_sma_period = result['Long SMA Period']
+    currency_symbol = result['Currency']
 
     fig = make_subplots(rows=2, cols=1, shared_xaxes=True, 
                         vertical_spacing=0.08, 
@@ -262,11 +340,148 @@ def create_plotly_chart(result):
         template="plotly_white"
     )
 
-    fig.update_yaxes(title_text="Price (₹)", row=1, col=1)
+    fig.update_yaxes(title_text=f"Price ({currency_symbol})", row=1, col=1)
     fig.update_yaxes(title_text="Z-Score", range=[-3, 3], row=2, col=1)
     fig.update_xaxes(title_text="Date", row=2, col=1)
 
     return fig
+
+def get_yahoo_finance_suggestions(query, market_index):
+    try:
+        # Map market indices to Yahoo Finance suffixes
+        market_suffixes = {
+            "NS": ".NS",  # NSE
+            "": "",       # US
+            "KL": ".KL",  # Malaysia
+            "BO": ".BO"   # BSE
+        }
+        suffix = market_suffixes.get(market_index, "")
+        
+        # Construct the Yahoo Finance search URL
+        url = f"https://query1.finance.yahoo.com/v1/finance/search?q={query}"
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        }
+        
+        response = requests.get(url, headers=headers)
+        if response.status_code == 200:
+            data = response.json()
+            suggestions = []
+            
+            if 'quotes' in data:
+                for quote in data['quotes']:
+                    if 'symbol' in quote and 'longname' in quote:
+                        # Check if the symbol matches our market
+                        if suffix == "" and "." not in quote['symbol']:  # US market
+                            suggestions.append({
+                                'symbol': quote['symbol'],
+                                'name': quote['longname']
+                            })
+                        elif suffix in quote['symbol']:  # Other markets
+                            suggestions.append({
+                                'symbol': quote['symbol'].replace(suffix, ""),
+                                'name': quote['longname']
+                            })
+            
+            return suggestions[:5]  # Return top 5 suggestions
+    except Exception as e:
+        st.error(f"Error fetching suggestions: {str(e)}")
+    return []
+
+def get_stock_recommendations(search_term, market_index):
+    if not search_term:
+        return []
+    
+    # First try Yahoo Finance API
+    suggestions = get_yahoo_finance_suggestions(search_term, market_index)
+    
+    # If no suggestions from Yahoo, fall back to our local database
+    if not suggestions:
+        all_stocks = {
+            "NS": {  # Indian NSE
+                "SBI": "State Bank of India",
+                "RELIANCE": "Reliance Industries",
+                "TCS": "Tata Consultancy Services",
+                "HDFC": "HDFC Bank",
+                "INFOSYS": "Infosys Limited",
+                "ICICI": "ICICI Bank",
+                "ITC": "ITC Limited",
+                "KOTAK": "Kotak Mahindra Bank",
+                "AXIS": "Axis Bank",
+                "L&T": "Larsen & Toubro",
+                "BHARTI": "Bharti Airtel",
+                "WIPRO": "Wipro Limited",
+                "HCLTECH": "HCL Technologies",
+                "SUNPHARMA": "Sun Pharmaceutical",
+                "TATAMOTORS": "Tata Motors"
+            },
+            "": {  # US Market
+                "APPLE": "Apple Inc.",
+                "MICROSOFT": "Microsoft Corporation",
+                "GOOGLE": "Alphabet Inc.",
+                "AMAZON": "Amazon.com Inc.",
+                "META": "Meta Platforms Inc.",
+                "TESLA": "Tesla Inc.",
+                "NVIDIA": "NVIDIA Corporation",
+                "JPMORGAN": "JPMorgan Chase & Co.",
+                "VISA": "Visa Inc.",
+                "WALMART": "Walmart Inc.",
+                "NETFLIX": "Netflix Inc.",
+                "INTEL": "Intel Corporation",
+                "AMD": "Advanced Micro Devices",
+                "COCA-COLA": "The Coca-Cola Company",
+                "DISNEY": "The Walt Disney Company"
+            },
+            "KL": {  # Malaysian Market
+                "MAYBANK": "Malayan Banking Berhad",
+                "CIMB": "CIMB Group Holdings",
+                "PBBANK": "Public Bank Berhad",
+                "TENAGA": "Tenaga Nasional",
+                "PCHEM": "Petronas Chemicals",
+                "IOICORP": "IOI Corporation",
+                "KLK": "Kuala Lumpur Kepong",
+                "SIME": "Sime Darby",
+                "GENTING": "Genting Berhad",
+                "HAPSENG": "Hap Seng Consolidated",
+                "AXIATA": "Axiata Group",
+                "DIGI": "DiGi.Com",
+                "MAXIS": "Maxis Berhad",
+                "PETGAS": "Petronas Gas",
+                "MISC": "MISC Berhad"
+            },
+            "BO": {  # Bombay Stock Exchange
+                "RELIANCE": "Reliance Industries",
+                "TCS": "Tata Consultancy Services",
+                "HDFC": "HDFC Bank",
+                "INFOSYS": "Infosys Limited",
+                "ICICI": "ICICI Bank",
+                "ITC": "ITC Limited",
+                "KOTAK": "Kotak Mahindra Bank",
+                "AXIS": "Axis Bank",
+                "L&T": "Larsen & Toubro",
+                "BHARTI": "Bharti Airtel"
+            }
+        }
+        
+        market_stocks = all_stocks.get(market_index, {})
+        search_term = search_term.upper()
+        
+        suggestions = []
+        for symbol, company in market_stocks.items():
+            if (search_term in symbol.upper() or 
+                search_term in company.upper()):
+                suggestions.append({
+                    'symbol': symbol,
+                    'name': company
+                })
+        
+        suggestions.sort(key=lambda x: (
+            not x['symbol'].startswith(search_term),
+            not x['name'].upper().startswith(search_term),
+            len(x['symbol'])
+        ))
+    
+    return suggestions[:5]
 
 def main():
     st.title("📈 Day Trading Mean Reversion Strategy Analyzer")
@@ -277,7 +492,8 @@ def main():
     market_options = {
         "India National Stock Exchange": "NS",
         "US Stock Market": "",
-        "Bombay Stock Exchange": "BO"
+        "Bombay Stock Exchange": "BO",
+        "Malaysian Stock Exchange": "KL"
     }
     selected_market = st.sidebar.selectbox(
         "Select Market", 
@@ -287,18 +503,31 @@ def main():
     market_index = market_options[selected_market]
 
     default_stocks = {
-        "India National Stock Exchange": ["SBIN", "RELIANCE", "TCS", "HDFCBANK", "INFY", "ICICIBANK", "ITC", "KOTAKBANK", "AXISBANK", "LT", "BHARTIARTL"],
-        "US Stock Market": ["AAPL", "MSFT", "GOOGL", "AMZN", "META", "TSLA", "NVDA", "JPM", "V", "WMT"],
-        "Bombay Stock Exchange": ["RELIANCE", "TCS", "HDFCBANK", "INFY", "ICICIBANK", "ITC", "KOTAKBANK", "AXISBANK", "LT", "BHARTIARTL"]
+        "India National Stock Exchange": ["SBI", "RELIANCE", "TCS", "HDFC", "INFOSYS", "ICICI", "ITC", "KOTAK", "AXIS", "L&T", "BHARTI"],
+        "US Stock Market": ["APPLE", "MICROSOFT", "GOOGLE", "AMAZON", "META", "TESLA", "NVIDIA", "JPMORGAN", "VISA", "WALMART"],
+        "Bombay Stock Exchange": ["RELIANCE", "TCS", "HDFC", "INFOSYS", "ICICI", "ITC", "KOTAK", "AXIS", "L&T", "BHARTI"],
+        "Malaysian Stock Exchange": ["MAYBANK", "CIMB", "PBBANK", "TENAGA", "PCHEM", "IOICORP", "KLK", "SIME", "GENTING", "HAPSENG"]
     }
 
-    stock_input = st.sidebar.text_area(
-        "Enter stock symbols (one per line)", 
-        value="\n".join(default_stocks[selected_market]),
-        height=150
-    )
+    # Initialize session state for stock list
+    if "stock_list" not in st.session_state:
+        st.session_state.stock_list = default_stocks[selected_market].copy()
 
-    entered_symbols = [symbol.strip().upper() for symbol in stock_input.split("\n") if symbol.strip()]
+    # Create a container for the stock input area
+    with st.sidebar:
+        st.subheader("Selected Stocks")
+        
+        # Text area for the stock list
+        stock_input = st.text_area(
+            "Enter stock symbols (one per line)", 
+            value="\n".join(st.session_state.stock_list),
+            height=150,
+            key="stock_input"
+        )
+
+    # Update session state with current input
+    st.session_state.stock_list = [symbol.strip().upper() for symbol in stock_input.split("\n") if symbol.strip()]
+    entered_symbols = st.session_state.stock_list
 
     lookback_days = st.sidebar.slider(
         "Lookback Period (days)", 
@@ -403,13 +632,14 @@ def main():
                         with cols[0]:
                             color = "green" if row['Action'] == "BUY" else "red"
                             st.markdown(f"<h3 style='color:{color}'>{row['Action']}</h3>", unsafe_allow_html=True)
-                            st.metric("Current Price", f"₹{row['Current Price']}")
-                            st.metric("Expected Price", f"₹{row['Expected Price']}", 
+                            currency = row.get('Currency', '₹')  # Get currency symbol from result
+                            st.metric("Current Price", f"{currency}{row['Current Price']}")
+                            st.metric("Expected Price", f"{currency}{row['Expected Price']}", 
                                      delta=f"{row['Potential Return %']}%")
 
                             st.markdown("#### Risk Management")
-                            st.metric("Stop Loss", f"₹{row['Stop Loss']}")
-                            st.metric("Take Profit", f"₹{row['Take Profit']}")
+                            st.metric("Stop Loss", f"{currency}{row['Stop Loss']}")
+                            st.metric("Take Profit", f"{currency}{row['Take Profit']}")
 
                         with cols[1]:
                             result_obj = next((r for r in results if r['Symbol'] == symbol), None)
@@ -437,7 +667,8 @@ def main():
                 with st.expander("Stock Details"):
                     cols = st.columns(3)
                     with cols[0]:
-                        st.metric("Current Price", f"₹{selected_result['Current Price']}")
+                        currency = selected_result.get('Currency', '₹')  # Get currency symbol from result
+                        st.metric("Current Price", f"{currency}{selected_result['Current Price']}")
                         st.metric("Z-Score", selected_result['Z-Score'])
                     with cols[1]:
                         st.metric("Volatility", f"{selected_result['Volatility %']}%")
@@ -445,8 +676,8 @@ def main():
                     with cols[2]:
                         short_period = selected_result['Short SMA Period']
                         long_period = selected_result['Long SMA Period']
-                        st.metric("SMA (Short)", f"₹{selected_result[f'SMA_{short_period}']}")
-                        st.metric("SMA (Long)", f"₹{selected_result[f'SMA_{long_period}']}")
+                        st.metric("SMA (Short)", f"{currency}{selected_result[f'SMA_{short_period}']}")
+                        st.metric("SMA (Long)", f"{currency}{selected_result[f'SMA_{long_period}']}")
 
         with tab4:
             st.header("Price History")
