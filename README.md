@@ -81,7 +81,6 @@ mean-reversion-analyzer/
 ## Deployment
 
 The application can be deployed to Vercel (frontend) and any Python hosting service (backend). Make sure to set up the appropriate environment variables and CORS settings.
-Deployed link for the frontend part: https://upvalue-project2.streamlit.app/
 
 ## License
 
