@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
-from algorithm import (
+from Trading_Algo.strategies.algorithm import (
     get_mean_reversion_signals,
     get_markets,
     get_default_stocks,
