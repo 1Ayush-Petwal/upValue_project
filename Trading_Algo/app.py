@@ -95,7 +95,7 @@ def get_mean_reversion_signals(symbol, index="NS", lookback_days=60, investment_
         with st.spinner(f"Fetching data for {symbol}..."):
             # Get the correct ticker symbol
             ticker_symbol = get_ticker_symbol(symbol, index)
-            ticker = yf.Ticker(ticker_symbol)
+            ticker = yf.Ticker(ticker_symbol)    #### 1st Call
             currency_symbol = get_currency_symbol(index)
             
             end_date = datetime.now()
