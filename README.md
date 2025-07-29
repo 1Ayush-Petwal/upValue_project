@@ -1,6 +1,6 @@
 # Mean Reversion Strategy Analyzer
 
-A web application that analyzes stocks using a mean reversion strategy optimized for day trading. The application provides buy/sell signals based on price deviations from moving averages.
+A web application that analyzes stocks using a mean reversion strategy optimized for day trading. The application provides buy/sell signals based on price deviations from moving averages, using an API to be integrated with other Applications
 
 ## Features
 
@@ -9,6 +9,17 @@ A web application that analyzes stocks using a mean reversion strategy optimized
 - Interactive charts and visualizations
 - Detailed trading signals and recommendations
 - Risk management indicators (Stop Loss, Take Profit)
+
+## API Endpoint checking
+
+For Mac Users:
+```
+cd Trading_API
+python3 -m .venv venv
+source .venv/bin/activate
+pip install -r requirements.txt
+python main.py
+```
 
 ## Tech Stack
 
