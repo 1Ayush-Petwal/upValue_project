@@ -8,12 +8,16 @@ import uvicorn
 
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 from Trading_Algo.core import (
+    get_yahoo_finance_history,
+    get_historical_price,
+    get_currency_symbol,
     get_ticker_symbol,
+    get_mean_reversion_signals_api,
+    run_analysis_api,
+    get_yahoo_finance_suggestions_api,
+    get_stock_recommendations_api,
     get_markets,
-    _get_mean_reversion_signals_,
-    get_stock_recommendations,
-    get_default_stocks,
-    _run_analysis_
+    get_default_stocks
 )
 
 app = FastAPI()
@@ -26,6 +30,10 @@ class MeanReversionRequest(BaseModel):
 
 class StockRecommendationRequest(BaseModel):
     search_term: str
+    market_index: str
+    
+class TickerRequest(BaseModel):
+    symbol: str
     market_index: str
 
 
@@ -47,9 +55,7 @@ def markets():
     return get_markets()
 
 
-class TickerRequest(BaseModel):
-    symbol: str
-    market_index: str
+
 
 ### List of Symbols:
 @app.post("/ticker-symbols")
@@ -61,7 +67,7 @@ def tickers(request: TickerRequest):
 @app.post("/mean-reversion-signals")
 def mean_reversion_signals(request: MeanReversionRequest):
     try:
-        result = _get_mean_reversion_signals_(
+        result = get_mean_reversion_signals_api(
             symbol=request.symbol,
             index=request.index,
             lookback_days=request.lookback_days,
@@ -79,14 +85,14 @@ def mean_reversion_signals(request: MeanReversionRequest):
 
 class AnalysisRequest(BaseModel):
     symbols: List[str]
-    looback_dats: int
+    lookback_days: int
     investment_per_stock: int
-    market_indx: str 
+    market_index: str 
 
 @app.post("/Analysis")
-def run_analysis(request: AnalysisRequest):
+def analysis_endpoint(request: AnalysisRequest):
     try:
-        result = _run_analysis_(
+        result = run_analysis_api(
             symbols=request.symbols,
             lookback_days=request.lookback_days,
             investment_per_stock=request.investment_per_stock,
@@ -95,7 +101,7 @@ def run_analysis(request: AnalysisRequest):
         print(result)
         
         if not result:
-            raise HTTPException(status_code=404, detail="Mean reversion signals not found")
+            raise HTTPException(status_code=404, detail="Analysis results not found")
             
         return result
     except Exception as e:
@@ -105,7 +111,7 @@ def run_analysis(request: AnalysisRequest):
 
 @app.post("/stock-recommendations")
 def stock_recommendations(request: StockRecommendationRequest):
-    result = get_stock_recommendations(
+    result = get_stock_recommendations_api(
         search_term=request.search_term,
         market_index=request.market_index,
     )

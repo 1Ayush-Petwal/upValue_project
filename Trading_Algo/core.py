@@ -82,7 +82,6 @@ def get_ticker_symbol(symbol, market_index):
     }
     
     symbol = symbol.upper()
-    print("The Symbol got on calling get_ticker_symbol")
     
     if market_index == "KL":
         return malaysian_tickers.get(symbol, f"{symbol}.KL")
@@ -114,176 +113,293 @@ def retry_on_failure(max_retries=3, delay=1):
         return wrapper
     return decorator
 
+
+
+def get_yahoo_finance_history(symbol, market_index, range_period="6mo", interval="1d"):
+    """
+    Fetch historical data directly from Yahoo Finance API (API-compatible version)
+    """
+    # Check if symbol already has a suffix
+    if "." in symbol:
+        # Symbol already has suffix, use it as is
+        full_symbol = symbol
+    else:
+        # Symbol doesn't have suffix, add appropriate one
+        suffixes = {
+            "NS": ".NS",
+            "": "",
+            "KL": ".KL",
+            "BO": ".BO"
+        }
+        suffix = suffixes.get(market_index, "")
+        full_symbol = symbol + suffix
+    
+    url = f"https://query1.finance.yahoo.com/v8/finance/chart/{full_symbol}?interval={interval}&range={range_period}"
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+    }
+    
+    try:
+        r = requests.get(url, headers=headers, timeout=10)
+        if r.status_code != 200:
+            print(f"Failed to fetch data for {full_symbol} (Status: {r.status_code})")
+            return None
+        
+        data = r.json()
+        result = data['chart']['result'][0]
+        timestamps = result['timestamp']
+        indicators = result['indicators']['quote'][0]
+        adjclose = result['indicators'].get('adjclose', [{}])[0].get('adjclose', [])
+
+        df = pd.DataFrame({
+            "Date": [datetime.fromtimestamp(ts) for ts in timestamps],
+            "Open": indicators['open'],
+            "High": indicators['high'],
+            "Low": indicators['low'],
+            "Close": indicators['close'],
+            "Adj Close": adjclose if adjclose else indicators['close'],
+            "Volume": indicators['volume']
+        })
+        
+        # Set Date as index and remove any NaN values
+        df.set_index('Date', inplace=True)
+        df = df.dropna()
+        
+        return df
+        
+    except Exception as e:
+        print(f"Error fetching/parsing data for {full_symbol}: {str(e)}")
+        return None
+
 @retry_on_failure(max_retries=3, delay=2)
-def _get_mean_reversion_signals_(symbol, index="NS", lookback_days=60, investment_amount=100000):
+def get_mean_reversion_signals_api(symbol, index="NS", lookback_days=60, investment_amount=100000):
+    """
+    API-compatible version of mean reversion analysis using Yahoo Finance direct API
+    """
+    try:
         # Get the correct ticker symbol
-            ticker_symbol = get_ticker_symbol(symbol, index)
-            ticker = yf.Ticker(ticker_symbol)    #### 1st Call
-            currency_symbol = get_currency_symbol(index)
-            
-            end_date = datetime.now()
-            buffer_days = max(15, int(lookback_days * 0.25))
-            start_date = end_date - timedelta(days=lookback_days + buffer_days)
-            
-            try:
-                df = ticker.history(start=start_date, end=end_date, interval="1d")
-                print(f"DEBUG: Successfully fetched data, shape: {df.shape}")
+        ticker_symbol = get_ticker_symbol(symbol, index)
+        currency_symbol = get_currency_symbol(index)
+        
+        # Calculate range period based on lookback days
+        buffer_days = max(15, int(lookback_days * 0.25))
+        total_days = lookback_days + buffer_days
+        
+        # Convert days to Yahoo Finance range format
+        if total_days <= 7:
+            range_period = "7d"
+        elif total_days <= 30:
+            range_period = "1mo"
+        elif total_days <= 90:
+            range_period = "3mo"
+        elif total_days <= 180:
+            range_period = "6mo"
+        else:
+            range_period = "1y"
+        
+        # Fetch data using our integrated function
+        df = get_yahoo_finance_history(ticker_symbol, index, range_period=range_period)
+        
+        if df is None or df.empty:
+            print(f"No data available for {symbol} (Ticker: {ticker_symbol})")
+            return None
 
-                if df is None or df.empty:
-                    # st.error(f"No data available for {symbol} (Ticker: {ticker_symbol})")
-                    return None
-            except Exception as e:
-                # st.error(f"Error fetching data for {symbol} (Ticker: {ticker_symbol}): {str(e)}")
-                return None
+        # Trim data to the requested lookback period
+        if len(df) > lookback_days:
+            df = df.tail(lookback_days)
 
-            if lookback_days <= 20:
-                short_sma_period = 3
-                long_sma_period = 8
-            elif lookback_days <= 40:
-                short_sma_period = 5
-                long_sma_period = 10
-            else:
-                short_sma_period = min(5, max(3, int(lookback_days * 0.08)))
-                long_sma_period = min(15, max(8, int(lookback_days * 0.15)))
+        # Dynamic SMA periods based on lookback days
+        if lookback_days <= 20:
+            short_sma_period = 3
+            long_sma_period = 8
+        elif lookback_days <= 40:
+            short_sma_period = 5
+            long_sma_period = 10
+        else:
+            short_sma_period = min(5, max(3, int(lookback_days * 0.08)))
+            long_sma_period = min(15, max(8, int(lookback_days * 0.15)))
 
-            current_price = df['Close'].iloc[-1]
-            price_1d_ago = get_historical_price(df, 1) or current_price
-            price_5d_ago = get_historical_price(df, min(5, lookback_days)) or current_price
-            price_10d_ago = get_historical_price(df, min(10, lookback_days)) or current_price
-            price_30d_ago = get_historical_price(df, min(30, lookback_days)) or current_price
-            price_60d_ago = get_historical_price(df, min(60, lookback_days)) or current_price
+        # Calculate current and historical prices
+        current_price = df['Close'].iloc[-1]
+        price_1d_ago = get_historical_price(df, 1) or current_price
+        price_5d_ago = get_historical_price(df, min(5, lookback_days)) or current_price
+        price_10d_ago = get_historical_price(df, min(10, lookback_days)) or current_price
+        price_30d_ago = get_historical_price(df, min(30, lookback_days)) or current_price
+        price_60d_ago = get_historical_price(df, min(60, lookback_days)) or current_price
 
-            df['SMA_Short'] = df['Close'].rolling(window=short_sma_period, min_periods=1).mean()
-            df['SMA_Long'] = df['Close'].rolling(window=long_sma_period, min_periods=1).mean()
-            df['STD_Long'] = df['Close'].rolling(window=long_sma_period, min_periods=1).std()
+        # Calculate technical indicators
+        df['SMA_Short'] = df['Close'].rolling(window=short_sma_period, min_periods=1).mean()
+        df['SMA_Long'] = df['Close'].rolling(window=long_sma_period, min_periods=1).mean()
+        df['STD_Long'] = df['Close'].rolling(window=long_sma_period, min_periods=1).std()
 
-            df['Upper_Band'] = df['SMA_Long'] + (df['STD_Long'] * 2)
-            df['Lower_Band'] = df['SMA_Long'] - (df['STD_Long'] * 2)
+        # Bollinger Bands
+        df['Upper_Band'] = df['SMA_Long'] + (df['STD_Long'] * 2)
+        df['Lower_Band'] = df['SMA_Long'] - (df['STD_Long'] * 2)
 
-            df['Z_Score'] = np.where(
-                df['STD_Long'] != 0,
-                (df['Close'] - df['SMA_Long']) / df['STD_Long'],
-                0
-            )
-            current_zscore = df['Z_Score'].iloc[-1]
+        # Z-Score calculation
+        df['Z_Score'] = np.where(
+            df['STD_Long'] != 0,
+            (df['Close'] - df['SMA_Long']) / df['STD_Long'],
+            0
+        )
+        current_zscore = df['Z_Score'].iloc[-1]
 
-            volatility_window = min(10, max(5, int(lookback_days * 0.1)))
-            recent_volatility = df['Close'].pct_change().tail(volatility_window).std() * np.sqrt(252) * 100
+        # Volatility calculation
+        volatility_window = min(10, max(5, int(lookback_days * 0.1)))
+        recent_volatility = df['Close'].pct_change().tail(volatility_window).std() * np.sqrt(252) * 100
 
-            z_score_threshold = 0.8
-            if lookback_days > 30:
-                z_score_threshold = min(1.2, 0.8 + (lookback_days - 30) / 100)
+        # Dynamic Z-Score threshold
+        z_score_threshold = 0.8
+        if lookback_days > 30:
+            z_score_threshold = min(1.2, 0.8 + (lookback_days - 30) / 100)
 
-            action = "HOLD"
+        # Determine action
+        action = "HOLD"
+        if current_zscore <= -z_score_threshold:
+            action = "BUY"
+        elif current_zscore >= z_score_threshold:
+            action = "SELL"
 
-            if current_zscore <= -z_score_threshold:
-                action = "BUY"
-            elif current_zscore >= z_score_threshold:
-                action = "SELL"
+        # Calculate expected reversion and potential return
+        expected_reversion = df['SMA_Long'].iloc[-1]
+        potential_return = abs((expected_reversion - current_price) / current_price * 100) if current_price > 0 else 0
 
-            expected_reversion = df['SMA_Long'].iloc[-1]
-            potential_return = abs((expected_reversion - current_price) / current_price * 100) if current_price > 0 else 0
+        # Risk management calculations
+        stop_loss_pct = 0.7 + (0.3 * recent_volatility / 15)
+        take_profit_pct = potential_return * 0.6
 
-            stop_loss_pct = 0.7 + (0.3 * recent_volatility / 15)
-            take_profit_pct = potential_return * 0.6
+        stop_loss = round(current_price * (1 - stop_loss_pct/100), 2) if action == "BUY" else round(current_price * (1 + stop_loss_pct/100), 2)
+        take_profit = round(current_price * (1 + take_profit_pct/100), 2) if action == "BUY" else round(current_price * (1 - take_profit_pct/100), 2)
 
-            stop_loss = round(current_price * (1 - stop_loss_pct/100), 2) if action == "BUY" else round(current_price * (1 + stop_loss_pct/100), 2)
-            take_profit = round(current_price * (1 + take_profit_pct/100), 2) if action == "BUY" else round(current_price * (1 - take_profit_pct/100), 2)
+        # VWAP calculation
+        vwap_period = min(lookback_days, 20)
+        df['VWAP'] = (df['Close'] * df['Volume']).rolling(window=vwap_period).sum() / df['Volume'].rolling(window=vwap_period).sum()
+        current_vwap = df['VWAP'].iloc[-1]
 
-            vwap_period = min(lookback_days, 20)
-            df['VWAP'] = (df['Close'] * df['Volume']).rolling(window=vwap_period).sum() / df['Volume'].rolling(window=vwap_period).sum()
-            current_vwap = df['VWAP'].iloc[-1]
-
-            result = {
-                'Symbol': symbol,
-                'Current Price': round(current_price, 2),
-                '1D Ago Price': round(price_1d_ago, 2),
-                '5D Ago Price': round(price_5d_ago, 2),
-                '10D Ago Price': round(price_10d_ago, 2),
-                '30D Ago Price': round(price_30d_ago, 2),
-                '60D Ago Price': round(price_60d_ago, 2),
-                'Volatility %': round(recent_volatility, 2),
-                f'SMA_{short_sma_period}': round(df['SMA_Short'].iloc[-1], 2),
-                f'SMA_{long_sma_period}': round(df['SMA_Long'].iloc[-1], 2),
-                'VWAP': round(current_vwap, 2) if not np.isnan(current_vwap) else None,
-                'Z-Score': round(current_zscore, 2),
-                'Z-Score Threshold': round(z_score_threshold, 2),
-                'Action': action,
-                'Expected Price': round(expected_reversion, 2),
-                'Potential Return %': round(potential_return, 2),
-                'Stop Loss': stop_loss,
-                'Take Profit': take_profit,
-                'Lookback Days': lookback_days,
-                'Short SMA Period': short_sma_period,
-                'Long SMA Period': long_sma_period,
-                'Data': df,
-                'Currency': currency_symbol
+        # Prepare result with Python native types (not numpy types)
+        # Note: Excluding 'Data' DataFrame for API compatibility - too large for JSON response
+        result = {
+            'Symbol': symbol,
+            'Current Price': round(float(current_price), 2),
+            '1D Ago Price': round(float(price_1d_ago), 2),
+            '5D Ago Price': round(float(price_5d_ago), 2),
+            '10D Ago Price': round(float(price_10d_ago), 2),
+            '30D Ago Price': round(float(price_30d_ago), 2),
+            '60D Ago Price': round(float(price_60d_ago), 2),
+            'Volatility %': round(float(recent_volatility), 2),
+            f'SMA_{short_sma_period}': round(float(df['SMA_Short'].iloc[-1]), 2),
+            f'SMA_{long_sma_period}': round(float(df['SMA_Long'].iloc[-1]), 2),
+            'VWAP': round(float(current_vwap), 2) if not np.isnan(current_vwap) else None,
+            'Z-Score': round(float(current_zscore), 2),
+            'Z-Score Threshold': round(float(z_score_threshold), 2),
+            'Action': action,
+            'Expected Price': round(float(expected_reversion), 2),
+            'Potential Return %': round(float(potential_return), 2),
+            'Stop Loss': float(stop_loss),
+            'Take Profit': float(take_profit),
+            'Lookback Days': int(lookback_days),
+            'Short SMA Period': int(short_sma_period),
+            'Long SMA Period': int(long_sma_period),
+            'Currency': currency_symbol,
+            # Include some basic chart data points for the last few days
+            'Recent_Prices': {
+                'dates': [d.strftime('%Y-%m-%d') for d in df.index[-5:].tolist()],
+                'prices': [round(float(p), 2) for p in df['Close'].tail(5).tolist()],
+                'sma_short': [round(float(p), 2) for p in df['SMA_Short'].tail(5).tolist()],
+                'sma_long': [round(float(p), 2) for p in df['SMA_Long'].tail(5).tolist()]
             }
-            return result
+        }
+        return result
+        
+    except Exception as e:
+        print(f"Error processing {symbol}: {str(e)}")
+        return None
 
-def _run_analysis_(symbols, lookback_days=60, investment_per_stock=100000, market_index="NS"):
+def run_analysis_api(symbols, lookback_days=60, investment_per_stock=100000, market_index="NS"):
+    """API-compatible version of run analysis"""
     analysis_results = []
+
+    print(f"Running analysis with {lookback_days} days lookback period...")
     for symbol in symbols:
-        result = _get_mean_reversion_signals_(symbol, index=market_index, lookback_days=lookback_days, investment_amount=investment_per_stock)
+        result = get_mean_reversion_signals_api(
+            symbol, 
+            index=market_index, 
+            lookback_days=lookback_days, 
+            investment_amount=investment_per_stock
+        )
         if result is not None:
             analysis_results.append(result)
 
     return analysis_results
 
-def get_yahoo_finance_suggestions(query, market_index):
+def get_yahoo_finance_suggestions_api(query, market_index):
+    """API-compatible version of Yahoo Finance suggestions"""
+    print(f"DEBUG: get_yahoo_finance_suggestions_api called with query='{query}', market_index='{market_index}'")
     try:
-        # Map market indices to Yahoo Finance suffixes
         market_suffixes = {
-            "NS": ".NS",  # NSE
-            "": "",       # US
-            "KL": ".KL",  # Malaysia
-            "BO": ".BO"   # BSE
+            "NS": ".NS",
+            "": "",
+            "KL": ".KL",
+            "BO": ".BO"
         }
         suffix = market_suffixes.get(market_index, "")
         
-        # Construct the Yahoo Finance search URL
         url = f"https://query1.finance.yahoo.com/v1/finance/search?q={query}"
         headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
         }
         
+        print(f"DEBUG: Making request to URL: {url}")
         response = requests.get(url, headers=headers)
+        print(f"DEBUG: Response status code: {response.status_code}")
+        
         if response.status_code == 200:
             data = response.json()
             suggestions = []
+            print(f"DEBUG: Response data keys: {data.keys() if data else 'None'}")
             
             if 'quotes' in data:
+                print(f"DEBUG: Found {len(data['quotes'])} quotes in response")
                 for quote in data['quotes']:
                     if 'symbol' in quote and 'longname' in quote:
-                        # Check if the symbol matches our market
-                        if suffix == "" and "." not in quote['symbol']:  # US market
+                        if suffix == "" and "." not in quote['symbol']:
                             suggestions.append({
                                 'symbol': quote['symbol'],
                                 'name': quote['longname']
                             })
-                        elif suffix in quote['symbol']:  # Other markets
+                        elif suffix in quote['symbol']:
                             suggestions.append({
                                 'symbol': quote['symbol'].replace(suffix, ""),
                                 'name': quote['longname']
                             })
+            else:
+                print("DEBUG: No 'quotes' key found in response")
             
-            return suggestions[:5]  # Return top 5 suggestions
+            print(f"DEBUG: Returning {len(suggestions)} suggestions from Yahoo Finance")
+            return suggestions[:5]
+        else:
+            print(f"DEBUG: Yahoo Finance request failed with status {response.status_code}")
     except Exception as e:
-        # st.error(f"Error fetching suggestions: {str(e)}")
-        print(e)
+        print(f"Error fetching suggestions: {str(e)}")
     return []
 
-def get_stock_recommendations(search_term, market_index):
+def get_stock_recommendations_api(search_term, market_index):
+    """API-compatible version of stock recommendations"""
+    print(f"DEBUG: get_stock_recommendations_api called with search_term='{search_term}', market_index='{market_index}'")
+    
     if not search_term:
+        print("DEBUG: Empty search term, returning empty list")
         return []
     
     # First try Yahoo Finance API
-    suggestions = get_yahoo_finance_suggestions(search_term, market_index)
+    suggestions = get_yahoo_finance_suggestions_api(search_term, market_index)
+    print(f"DEBUG: Yahoo Finance returned {len(suggestions)} suggestions")
     
-    # If no suggestions from Yahoo, fall back to our local database
+    # If no suggestions from Yahoo, fall back to local database
     if not suggestions:
+        print("DEBUG: No Yahoo Finance suggestions, falling back to local database")
         all_stocks = {
-            "NS": {  # Indian NSE
+            "NS": {
                 "SBI": "State Bank of India",
                 "RELIANCE": "Reliance Industries",
                 "TCS": "Tata Consultancy Services",
@@ -295,12 +411,8 @@ def get_stock_recommendations(search_term, market_index):
                 "AXIS": "Axis Bank",
                 "L&T": "Larsen & Toubro",
                 "BHARTI": "Bharti Airtel",
-                "WIPRO": "Wipro Limited",
-                "HCLTECH": "HCL Technologies",
-                "SUNPHARMA": "Sun Pharmaceutical",
-                "TATAMOTORS": "Tata Motors"
             },
-            "": {  # US Market
+            "": {
                 "APPLE": "Apple Inc.",
                 "MICROSOFT": "Microsoft Corporation",
                 "GOOGLE": "Alphabet Inc.",
@@ -311,13 +423,8 @@ def get_stock_recommendations(search_term, market_index):
                 "JPMORGAN": "JPMorgan Chase & Co.",
                 "VISA": "Visa Inc.",
                 "WALMART": "Walmart Inc.",
-                "NETFLIX": "Netflix Inc.",
-                "INTEL": "Intel Corporation",
-                "AMD": "Advanced Micro Devices",
-                "COCA-COLA": "The Coca-Cola Company",
-                "DISNEY": "The Walt Disney Company"
             },
-            "KL": {  # Malaysian Market
+            "KL": {
                 "MAYBANK": "Malayan Banking Berhad",
                 "CIMB": "CIMB Group Holdings",
                 "PBBANK": "Public Bank Berhad",
@@ -328,13 +435,8 @@ def get_stock_recommendations(search_term, market_index):
                 "SIME": "Sime Darby",
                 "GENTING": "Genting Berhad",
                 "HAPSENG": "Hap Seng Consolidated",
-                "AXIATA": "Axiata Group",
-                "DIGI": "DiGi.Com",
-                "MAXIS": "Maxis Berhad",
-                "PETGAS": "Petronas Gas",
-                "MISC": "MISC Berhad"
             },
-            "BO": {  # Bombay Stock Exchange
+            "BO": {
                 "RELIANCE": "Reliance Industries",
                 "TCS": "Tata Consultancy Services",
                 "HDFC": "HDFC Bank",
@@ -349,24 +451,31 @@ def get_stock_recommendations(search_term, market_index):
         }
         
         market_stocks = all_stocks.get(market_index, {})
-        search_term = search_term.upper()
+        print(f"DEBUG: Market '{market_index}' has {len(market_stocks)} stocks")
+        search_term_upper = search_term.upper()
+        print(f"DEBUG: Searching for '{search_term_upper}' in local database")
         
         suggestions = []
         for symbol, company in market_stocks.items():
-            if (search_term in symbol.upper() or 
-                search_term in company.upper()):
+            if (search_term_upper in symbol.upper() or 
+                search_term_upper in company.upper()):
                 suggestions.append({
                     'symbol': symbol,
                     'name': company
                 })
+                print(f"DEBUG: Found match: {symbol} - {company}")
+        
+        print(f"DEBUG: Local database search found {len(suggestions)} matches")
         
         suggestions.sort(key=lambda x: (
-            not x['symbol'].startswith(search_term),
-            not x['name'].upper().startswith(search_term),
+            not x['symbol'].startswith(search_term_upper),
+            not x['name'].upper().startswith(search_term_upper),
             len(x['symbol'])
         ))
     
-    return suggestions[:5]
+    final_suggestions = suggestions[:5]
+    print(f"DEBUG: Returning {len(final_suggestions)} final suggestions")
+    return final_suggestions
 
 def get_default_stocks(market: str):
     default_stocks = {
