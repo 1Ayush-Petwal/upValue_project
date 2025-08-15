@@ -54,6 +54,12 @@ def root():
 def markets():
     return get_markets()
 
+@app.get("/default-stocks/{market}")
+def default_stocks(market: str):
+    result = get_default_stocks(market)
+    if not result:
+        raise HTTPException(status_code=404, detail="Market not found")
+    return result
 
 
 
@@ -117,12 +123,7 @@ def stock_recommendations(request: StockRecommendationRequest):
     )
     return result
 
-@app.get("/default-stocks/{market}")
-def default_stocks(market: str):
-    result = get_default_stocks(market)
-    if not result:
-        raise HTTPException(status_code=404, detail="Market not found")
-    return result
+
 
 def main():
     print("Running FastAPI server...")

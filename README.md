@@ -2,6 +2,10 @@
 
 A web application that analyzes stocks using a mean reversion strategy optimized for day trading. The application provides buy/sell signals based on price deviations from moving averages, using an API to be integrated with other Applications
 
+## System Design 
+
+![System_Design](System_Design.png)
+
 ## Features
 
 - Real-time stock analysis using mean reversion strategy
@@ -21,82 +25,52 @@ pip install -r requirements.txt
 python main.py
 ```
 
-## Tech Stack
-
-- Frontend: StreamLit
-- Backend: FastAPI (Python)
-- Data Analysis: Pandas, NumPy
-- Stock Data: Yahoo Finance API
-
 ## Supported Markets:
 KL - malaysian_market
+NS - Indian National Stock Exchange
+US - US Stock Exchange
+BO - Bombay Stock Exchange
 
-
-## Project Structure
-
-```
-mean-reversion-analyzer/
-├── Trading_Alog/               # Trading Algo testing dashboard
-│   ├── app.py
-│   └── requirements.txt         # Algo dependencies
-│   └── rest...                  
-
-├── Trading_API/                 # Rest API for Interaction 
-│   ├── main.py                  # API endpoints
-│   └── requirements.txt  # Backend dependencies
-└── README.md            # Project documentation
-```
+For further details test our API to learn more
 
 ## Setup and Installation
 
-1. Clone the repository:
+0. Clone the repository:
    ```bash
-   git clone https://github.com/yourusername/mean-reversion-analyzer.git
-   cd mean-reversion-analyzer
+   git clone https://github.com/1Ayush-Petwal/upValue_project.git
+   cd upValue_project
    ```
 
-2. Set up the backend:
+2. Run the Analystics Platform:
    ```bash
-   cd backend
-   python -m venv venv
-   source venv/bin/activate  # On Windows: venv\Scripts\activate
+   cd Trading_Algo
+   python -m venv .venv
+   source .venv/bin/activate  # On Windows: venv\Scripts\activate
    pip install -r requirements.txt
+   streamlit run app.py
    ```
 
-3. Set up the frontend:
+3. API over the Trading Engine
    ```bash
-   cd frontend
-   npm install
+   # from root directory
+   cd Trading_API
+   python -m venv .venv
+   source .venv/bin/activate
+   pip install -r requirements.txt
+   python main.py
    ```
 
-## Running the Application
+## Testing API
 
-1. Start the backend server:
-   ```bash
-   cd backend
-   uvicorn api:app --reload --port 8000
-   ```
-
-2. Start the frontend development server:
-   ```bash
-   cd frontend
-   npm start
-   ```
-
-3. Open your browser and navigate to `http://localhost:3000`
-
-## Usage
-
-1. Select your market (NSE, BSE, or US)
-2. Enter stock symbols (one per line)
-3. Adjust the lookback period (10-60 days recommended)
-4. Set your investment amount per stock
-5. Click "Analyze Stocks" to get results
+1. Use the get_markets endpoint for getting the markets
+2. Use the default_stocks_market to get the stock options for each of the market
+3. Use them to test the main_functions
+```
+get_mean_reversion_signals():
+analyse():
+```
 
 ## Deployment
 
-The application can be deployed to Vercel (frontend) and any Python hosting service (backend). Make sure to set up the appropriate environment variables and CORS settings.
 
-## License
-
-MIT License
+Further steps include the deployment of the API using Render & Vercel based frontend
